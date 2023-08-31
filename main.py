@@ -191,9 +191,9 @@ def generate_target(digit, total_neurons, num_classes):
     return target
 
 
-def predict_class_over_time(output_tensor):
-    # Reshape the tensor to [40, 1, 10, 10]
-    reshaped_tensor = output_tensor.view(40, 1, 10, -1)
+def predict_class_over_time(output_tensor, time_steps=8):
+    # Reshape the tensor to [steps, 1, 10, 10]
+    reshaped_tensor = output_tensor.view(time_steps, 1, 10, -1)
 
     # Sum along the last dimension to get total activity for each class at each time step
     class_activity = torch.sum(reshaped_tensor, dim=3)
@@ -263,11 +263,12 @@ def main():
 
             # print(data.shape)
             output = []
-            for i in range(8):
+            steps = 100
+            for i in range(steps):
                 activations = cortical_stack(snn.spikegen.rate(data, 1), targets)
                 output.append(activations)
             output = torch.stack(output)
-            if predict_class_over_time(output) == targets.item():
+            if predict_class_over_time(output, steps) == targets.item():
                 num_correct += 1
             samples_seen += 1
 
