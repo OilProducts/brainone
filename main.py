@@ -190,7 +190,7 @@ def main():
 
         for data, targets in progress_bar:
             data = data.flatten()
-            target_tensor = generate_target(targets.item(), 100, 10)
+            target_tensor = generate_target(targets.item(), 100, 10) # TODO: make this return spikes with a time dimension in spot 0
             #print(f'target_tensor: {target_tensor}')
             # data = data.view(-1, 28 * 28)
 
