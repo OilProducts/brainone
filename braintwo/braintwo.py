@@ -10,6 +10,14 @@ from tqdm import tqdm
 
 import cProfile
 
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+    print("GPU is available and being used")
+else:
+    device = torch.device("cpu")
+    print("GPU is not available, using CPU instead")
+
+
 data_path = "~/robots/datasets/"
 transform = transforms.Compose(
     [
@@ -56,14 +64,14 @@ def LIFNeuron(input, membrane, beta, threshold, reset):
 
 
 class STDPLinear(nn.Module):
-    def __init__(self, in_features, out_features, beta=.99, threshold=1, reset=.8, tau_pos=20.0, tau_neg=20.0,
-                 a_pos=0.005, a_neg=0.005):
+    def __init__(self, in_features, out_features, batch_size=128, beta=.99, threshold=1, reset=.8, tau_pos=20.0, tau_neg=20.0,
+                 a_pos=0.005, a_neg=0.005, device='cuda'):
         super().__init__()
         #self.weights = torch.rand(in_features, out_features)
-        self.weights = nn.Linear(in_features, out_features)
-        self.membrane = torch.zeros(out_features)
-        self.delta_pre = torch.zeros(in_features)
-        self.delta_fire = torch.zeros(out_features)
+        self.weights = nn.Linear(in_features, out_features, device=device)
+        self.membrane = torch.zeros(batch_size, out_features, device=device)
+        self.delta_pre = torch.zeros(batch_size, in_features, device=device)
+        self.delta_fire = torch.zeros(batch_size, out_features, device=device)
 
         self.beta = beta
         self.threshold = threshold
@@ -86,7 +94,7 @@ class STDPLinear(nn.Module):
     def forward(self, in_spikes):
         # print(f'Initial in_spikes shape: {in_spikes.shape}')  # Should be [784]
 
-        weighted_input = torch.mm(in_spikes.unsqueeze(0), self.weights.weight.t())
+        weighted_input = torch.mm(in_spikes, self.weights.weight.t())
         # print(f'Weighted input shape: {weighted_input.shape}')  # Should be [1, 500]
         #
         # print(f'weighted_input: {weighted_input.squeeze(0).shape}')
@@ -108,7 +116,7 @@ class STDPLinear(nn.Module):
         self.delta_fire[out_spikes.bool()] = 0
 
         # Compute delta_t for STDP
-        delta_t = self.delta_fire.unsqueeze(1) - self.delta_pre.unsqueeze(0)
+        delta_t = self.delta_fire.unsqueeze(1) - self.delta_pre.unsqueeze(2)
         # print(f'delta_t: {delta_t.shape}')
 
         # Compute STDP weight changes
@@ -120,7 +128,8 @@ class STDPLinear(nn.Module):
         # Apply weight changes
         # print(f'weight_changes: {weight_changes.shape}')
         # print(f'weights: {self.weights.weight.shape}')
-        self.weights.weight.data += weight_changes
+        avg_weight_changes = weight_changes.mean(dim=0).t()
+        self.weights.weight.data += avg_weight_changes
 
         return out_spikes
 
@@ -151,12 +160,19 @@ class STDPLinear(nn.Module):
         """
         Modifies the last weight update based on a reward/punishment factor.
         """
-        self.weights.weight.data += self.last_weight_change * (factor - 1)
+        avg_last_weight_change = self.last_weight_change.mean(dim=0).t()
+        self.weights.weight.data += avg_last_weight_change * (factor - 1)
 
 
 class SpikingNetwork(nn.Module):
     def __init__(self):
         super(SpikingNetwork, self).__init__()
+        # self.layer_1 = STDPLinear(784, 500)
+        # self.layer_2 = STDPLinear(500, 500)
+        # self.layer_3 = STDPLinear(500, 500)
+        # self.layer_4 = STDPLinear(500, 200)
+        # self.layer_5 = STDPLinear(200, 10)
+
         self.layer_1 = STDPLinear(784, 500)
         self.layer_2 = STDPLinear(500, 200)
         self.layer_3 = STDPLinear(200, 10)
@@ -165,6 +181,8 @@ class SpikingNetwork(nn.Module):
         x = self.layer_1(x)
         x = self.layer_2(x)
         x = self.layer_3(x)
+        # x = self.layer_4(x)
+        # x = self.layer_5(x)
         return x
 
     def apply_reward(self, factor):
@@ -183,10 +201,12 @@ def main():
     mnist_training_data = utils.data_subset(mnist_training_data, 1)
     mnist_test_data = utils.data_subset(mnist_test_data, 1)
 
+    batch_size = 128
+
     # Initialize dataloaders
     train_loader = DataLoader(
         mnist_training_data,
-        batch_size=1,
+        batch_size=batch_size,
         shuffle=True,
         drop_last=True,
         num_workers=0,
@@ -194,17 +214,23 @@ def main():
         # prefetch_factor=8,
     )
     print("Train loader batches:", len(train_loader))
+
+
     test_loader = DataLoader(
-        mnist_test_data, batch_size=1, shuffle=True, drop_last=True, num_workers=8
+        mnist_test_data,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=8
     )
     print("Test loader batches:", len(test_loader))
 
     # Initialize network
     network = SpikingNetwork()
 
-    # Training parameters
+    # Training param
     num_epochs = 10
-    num_steps = 20
+    num_steps = 100
     plasticity_reward = 2
     plasticity_punish = 0.5
 
@@ -212,11 +238,14 @@ def main():
         num_correct = 0  # Number of correct predictions
         samples_seen = 0  # Total number of samples processed
 
-        progress_bar = tqdm(iter(train_loader), total=len(train_loader))
+        progress_bar = tqdm(iter(train_loader), total=len(train_loader), unit_scale=batch_size)
         for inputs, labels in progress_bar:
+            # Move inputs and labels to GPU
+            inputs = inputs.to('cuda')
+            labels = labels.to('cuda')
             # Convert inputs to spike trains
-            inputs = inputs.flatten()
-            output_spike_accumulator = torch.zeros(10)  # Assuming 10 output neurons for 10 classes
+            inputs = inputs.view(batch_size, -1)  # This will reshape the tensor to [batch_size, 784]
+            output_spike_accumulator = torch.zeros(batch_size, 10, device='cuda')
 
             for step in range(num_steps):
                 in_spikes = spikegen.rate(inputs, 1).squeeze(0)
@@ -231,15 +260,21 @@ def main():
                 # _, predicted_class = output_spikes.sum(dim=0).max(dim=0)
 
             # Determine the predicted class based on the accumulated spikes
-            _, predicted_class = output_spike_accumulator.max(dim=0)
+            _, predicted_classes = output_spike_accumulator.max(dim=1)
+
+            correct_predictions = (predicted_classes == labels).float()
+            num_correct += correct_predictions.sum().item()  # Summing over the batch
+            reward_factors = correct_predictions * plasticity_reward + (1 - correct_predictions) * plasticity_punish
+            for factor in reward_factors:
+                network.apply_reward(factor)
 
             # Update statistics
-            samples_seen += 1
-            if predicted_class == labels:
-                num_correct += 1
-                network.apply_reward(plasticity_reward)
-            else:
-                network.apply_reward(plasticity_punish)
+            samples_seen += batch_size
+            # if predicted_class == labels:
+            #     num_correct += 1
+            #     network.apply_reward(plasticity_reward)
+            # else:
+            #     network.apply_reward(plasticity_punish)
 
             # Update progress bar description
             accuracy = num_correct / samples_seen * 100
@@ -249,4 +284,5 @@ def main():
 
 
 with torch.no_grad():
-    cProfile.run("main()")
+    main()
+    #cProfile.run("main()")
