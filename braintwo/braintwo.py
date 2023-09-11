@@ -55,7 +55,7 @@ def LIFNeuron(input, membrane, beta, threshold, reset):
     spike = (membrane > threshold).float()
 
     # Reset the membrane potential wherever spikes are generated
-    membrane = torch.where(spike.bool(), membrane - reset, membrane)
+    membrane = torch.where(spike.bool(), reset, membrane)
 
     return spike, membrane
 
@@ -71,13 +71,15 @@ class STDPLinear(nn.Module):
     - STDP parameters (floats): Parameters that determine the behavior of STDP (e.g., tau_pos, tau_neg, etc.)
     """
 
-    def __init__(self, in_features, out_features, batch_size=128, beta=.99, threshold=1, reset=.8,
-                 tau_pos=20.0, tau_neg=20.0, a_pos=0.005, a_neg=0.005, trace_decay=.9, device='cpu'):
+    def __init__(self, in_features, out_features, batch_size=128, beta=.98, threshold=.4, reset=0,
+                 a_pos=0.005, a_neg=0.005, trace_decay=.85, plasticity_reward=1, plasticity_punish=1, device='cpu'):
         super().__init__()
 
         # Initializing weights, membrane potentials, and STDP-related variables
         self.weights = nn.Linear(in_features, out_features, device=device)
         self.membrane = torch.zeros(batch_size, out_features, device=device)
+
+        self.out_spikes = torch.zeros(batch_size, out_features, device=device)
 
         # Training parameters
         self.batch_size = batch_size
@@ -90,12 +92,10 @@ class STDPLinear(nn.Module):
         self.reset = reset
 
         # Plasticity parameters
-        self.plasticity_reward = 2
-        self.plasticity_punish = .5
+        self.plasticity_reward = plasticity_reward
+        self.plasticity_punish = plasticity_punish
 
         # STDP parameters
-        self.tau_pos = tau_pos
-        self.tau_neg = tau_neg
         self.a_pos = a_pos
         self.a_neg = a_neg
 
@@ -111,64 +111,43 @@ class STDPLinear(nn.Module):
         weighted_input = torch.mm(in_spikes, self.weights.weight.t())
 
         # Simulate the LIF neurons
-        out_spikes, out_membrane = LIFNeuron(weighted_input.squeeze(), self.membrane,
-                                             self.beta, self.threshold, self.reset)
-        self.membrane = out_membrane
+        self.out_spikes, self.membrane = LIFNeuron(weighted_input.squeeze(), self.membrane,
+                                                   self.beta, self.threshold, self.reset)
+        # self.membrane = out_membrane
 
-        # # Update the time since the last spike for each neuron
-        # self.delta_pre = self.delta_pre + 1
-        # self.delta_pre[in_spikes.bool()] = 0
-        # self.delta_fire = self.delta_fire + 1
-        # self.delta_fire[out_spikes.bool()] = 0
+        if train:
+            # Update traces
+            self.trace_pre = self.trace_pre * self.trace_decay + in_spikes
+            self.trace_post = self.trace_post * self.trace_decay + self.out_spikes
 
-        # Update traces
-        self.trace_pre = self.trace_pre * self.trace_decay + in_spikes
-        self.trace_post = self.trace_post * self.trace_decay + out_spikes
+            torch.clamp(self.trace_pre, 0, 1, out=self.trace_pre)
+            torch.clamp(self.trace_post, 0, 1, out=self.trace_post)
 
-        # Compute STDP weight changes using traces
-        weight_changes = self.compute_stdp_with_trace(self.trace_pre, self.trace_post)
+            # Compute STDP weight changes using traces
+            weight_changes = self.compute_stdp_with_trace(self.trace_pre, self.trace_post)
 
-        # Save the last weight change for potential reward/punishment adjustments
-        self.last_weight_change = weight_changes  # .clone()
+            # Save the last weight change for potential reward/punishment adjustments
+            self.last_weight_change = weight_changes  # .clone()
 
-        # Apply the STDP-induced weight changes
-        avg_weight_changes = weight_changes.sum(dim=0).t()
-        self.weights.weight.data += avg_weight_changes
+            # Apply the STDP-induced weight changes
+            avg_weight_changes = weight_changes.sum(dim=0).t()
+            self.weights.weight.data += avg_weight_changes
 
-        self.weights.weight.data = torch.clamp(self.weights.weight.data, -.1, .1)
+            self.weights.weight.data = torch.clamp(self.weights.weight.data, -0.1, .5)
 
-        return out_spikes
+        return self.out_spikes
 
-    @torch.compile
+    # @torch.compile
     def compute_stdp_with_trace(self, trace_pre, trace_post):
         # This is a simplified STDP rule using traces, adjust as needed
         potentiation = trace_post.unsqueeze(1) * self.a_pos * trace_pre.unsqueeze(2)
         depression = trace_pre.unsqueeze(2) * self.a_neg * trace_post.unsqueeze(1)
         return potentiation - depression
 
-    def reset(self):
+    def reset_hidden_state(self):
         self.membrane = torch.zeros(self.batch_size, self.out_features, device=device)
         self.trace_pre = torch.zeros(self.in_features, device=device)
         self.trace_post = torch.zeros(self.out_features, device=device)
-
-    @torch.compile
-    def compute_stdp(self, delta_t):
-        """Compute the weight changes due to STDP rules.
-
-        Args:
-        - delta_t (torch.Tensor): The difference in spike timings between pre and post-synaptic neurons.
-
-        Returns:
-        - torch.Tensor: The computed weight changes.
-        """
-
-        # Potentiation (strengthening) due to pre-before-post spikes
-        potentiation = (delta_t > 0) * self.a_pos * torch.exp(-delta_t / self.tau_pos)
-
-        # Depression (weakening) due to post-before-pre spikes
-        depression = (delta_t < 0) * self.a_neg * torch.exp(delta_t / self.tau_neg)
-
-        return potentiation - depression
 
     def apply_reward(self, factor):
         """Modifies the last weight update based on a reward/punishment factor.
@@ -183,49 +162,81 @@ class STDPLinear(nn.Module):
 
 
 class SpikingNetwork(nn.Module):
-    def __init__(self, batch_size=128, learning_rate=.01, device='cuda'):
+    def __init__(self, batch_size=128, a_pos=.005, a_neg=.005, plasticity_reward=1, plasticity_punish=1, device='cuda'):
         super(SpikingNetwork, self).__init__()
-        # self.layer_1 = STDPLinear(784, 500)
-        # self.layer_2 = STDPLinear(500, 500)
-        # self.layer_3 = STDPLinear(500, 500)
-        # self.layer_4 = STDPLinear(500, 200)
-        # self.layer_5 = STDPLinear(200, 10)
-
-        self.learning_rate = learning_rate
+        self.a_pos = a_pos
+        self.a_neg = a_neg
 
         self.layer_1 = STDPLinear(784, 500,
-                                  a_pos=self.learning_rate,
-                                  a_neg=self.learning_rate,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
                                   device=device,
                                   batch_size=batch_size)
-        self.layer_2 = STDPLinear(500, 200,
-                                  a_pos=self.learning_rate,
-                                  a_neg=self.learning_rate,
+        self.layer_2 = STDPLinear(600, 500,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
                                   device=device,
                                   batch_size=batch_size)
-        self.layer_3 = STDPLinear(200, 10,
-                                  a_pos=self.learning_rate,
-                                  a_neg=self.learning_rate,
+        self.layer_3 = STDPLinear(600, 500,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+        self.layer_4 = STDPLinear(600, 200,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+        self.layer_5 = STDPLinear(200, 100,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
                                   device=device,
                                   batch_size=batch_size)
 
     def forward(self, x, train=True):
-        x = self.layer_1(x, train=train)
-        x = self.layer_2(x, train=train)
-        x = self.layer_3(x, train=train)
-        # x = self.layer_4(x)
-        # x = self.layer_5(x)
-        return x
+        layer_1_out = self.layer_1(x, train=train)
+        # print(f'total spikes in layer 1: {layer_1_out.sum()}')
+        layer_2_out = self.layer_2(torch.cat((layer_1_out, self.layer_5.out_spikes), 1), train=train)
+        # print(f'total spikes in layer 2: {layer_2_out.sum()}')
+        layer_3_out = self.layer_3(torch.cat((layer_2_out, self.layer_5.out_spikes), 1), train=train)
+        # print(f'total spikes in layer 3: {layer_3_out.sum()}')
+        layer_4_out = self.layer_4(torch.cat((layer_3_out, self.layer_5.out_spikes), 1), train=train)
+        # print(f'total spikes in layer 4: {layer_4_out.sum()}')
+        layer_5_out = self.layer_5(layer_4_out, train=train)
+        # print(f'total spikes in layer 5: {layer_5_out.sum()}')
+
+        return layer_5_out
 
     def apply_reward(self, factor):
         self.layer_1.apply_reward(factor)
         self.layer_2.apply_reward(factor)
         self.layer_3.apply_reward(factor)
+        self.layer_4.apply_reward(factor)
+        self.layer_5.apply_reward(factor)
 
-    def reset(self):
-        self.layer_1.reset()
-        self.layer_2.reset()
-        self.layer_3.reset()
+    def reset_hidden_state(self):
+        self.layer_1.reset_hidden_state()
+        self.layer_2.reset_hidden_state()
+        self.layer_3.reset_hidden_state()
+        self.layer_4.reset_hidden_state()
+        self.layer_5.reset_hidden_state()
+
+
+def pool_spikes(output_spikes):
+    # print(f'Output spikes shape: {output_spikes.shape}')
+    pooled_spikes = output_spikes.view(-1, 10, 10).sum(1)  # Assuming output_spikes has shape [100]
+    # print(f'Pooled spikes shape: {pooled_spikes.shape}')
+    return pooled_spikes
 
 
 def validate(network, batch_size, num_steps, test_loader):
@@ -237,19 +248,21 @@ def validate(network, batch_size, num_steps, test_loader):
             labels = labels.to(device)
 
             inputs = inputs.view(batch_size, -1)
-            output_spike_accumulator = torch.zeros(batch_size, 10, device=device)
+            output_spike_accumulator = torch.zeros(batch_size, 100, device=device)
 
             for step in range(num_steps):
                 in_spikes = spikegen.rate(inputs, 1).squeeze(0)
-                output_spikes = network(in_spikes)
+                output_spikes = network(in_spikes, train=False)
                 output_spike_accumulator += output_spikes
 
-            _, predicted_classes = output_spike_accumulator.max(dim=1)
+            _, predicted_classes = pool_spikes(output_spike_accumulator).max(dim=1)
+            # _, predicted_classes = output_spike_accumulator.max(dim=1)
             correct_predictions = (predicted_classes == labels).float()
             correct += correct_predictions.sum().item()  # Summing over the batch
 
             # _, predicted_class = output_spikes.sum(dim=0).max(dim=0)
             total += labels.size(0)
+            network.reset_hidden_state()
             # correct += (predicted_class == labels).sum().item()
     return 100 * correct / total
 
@@ -263,10 +276,10 @@ def main():
 
     # Training param
     num_epochs = 10
-    num_steps = 30
-    plasticity_reward = 2
-    plasticity_punish = 0.5
-    batch_size = 16
+    num_steps = 1000
+    plasticity_reward = 1
+    plasticity_punish = .2
+    batch_size = 128
     subset = 1
 
     mnist_training_data = utils.data_subset(mnist_training_data, subset)
@@ -278,7 +291,7 @@ def main():
         batch_size=batch_size,
         shuffle=True,
         drop_last=True,
-        num_workers=8,
+        num_workers=0,
         pin_memory=True,
         # prefetch_factor=8,
     )
@@ -289,19 +302,24 @@ def main():
         batch_size=batch_size,
         shuffle=True,
         drop_last=True,
-        num_workers=8
+        num_workers=0
     )
     print("Test loader batches:", len(test_loader))
 
     # Initialize network
     network = SpikingNetwork(batch_size=batch_size,
-                             learning_rate=.0001,
+                             a_pos=.0002,
+                             a_neg=.0002,
+                             plasticity_reward=plasticity_reward,
+                             plasticity_punish=plasticity_punish,
                              device=device)
 
     for epoch in range(num_epochs):
         num_correct = 0  # Number of correct predictions
         samples_seen = 0  # Total number of samples processed
 
+        correct_counts = torch.zeros(10, device=device)
+        total_counts = torch.zeros(10, device=device)
         progress_bar = tqdm(iter(train_loader), total=len(train_loader), unit_scale=batch_size)
         for inputs, labels in progress_bar:
             # Move inputs and labels to GPU
@@ -309,7 +327,7 @@ def main():
             labels = labels.to(device)
             # Convert inputs to spike trains
             inputs = inputs.view(batch_size, -1)  # This will reshape the tensor to [batch_size, 784]
-            output_spike_accumulator = torch.zeros(batch_size, 10, device=device)
+            output_spike_accumulator = torch.zeros(batch_size, 100, device=device)
 
             for step in range(num_steps):
                 in_spikes = spikegen.rate(inputs, 1).squeeze(0)
@@ -320,15 +338,22 @@ def main():
                 # Accumulate spikes
                 output_spike_accumulator += output_spikes
 
-                # # Determine the predicted class based on the spikes in the last layer
-                # _, predicted_class = output_spikes.sum(dim=0).max(dim=0)
-
             # Determine the predicted class based on the accumulated spikes
-            # print(f'output_spike_accumulator: {output_spike_accumulator}')
-            _, predicted_classes = output_spike_accumulator.max(dim=1)
+            _, predicted_classes = pool_spikes(output_spike_accumulator).max(dim=1)
 
             correct_predictions = (predicted_classes == labels).float()
-            # print(f'correct_predictions: {correct_predictions}')
+            for idx, correct in enumerate(correct_predictions):
+                if correct == 1.0:
+                    correct_counts[labels[idx]] += 1
+                total_counts[labels[idx]] += 1
+
+            # Construct the string for the tqdm description:
+            label_strings = []
+            for label in range(10):
+                accuracy_label = (correct_counts[label] / total_counts[label] * 100) if total_counts[label] > 0 else 0
+                label_string = f"{label}: {int(correct_counts[label])}/{int(total_counts[label])}"  # ({accuracy_label:.2f}%)"
+                label_strings.append(label_string)
+
             num_correct += correct_predictions.sum().item()  # Summing over the batch
             reward_factors = correct_predictions * plasticity_reward + (1 - correct_predictions) * plasticity_punish
             for factor in reward_factors:
@@ -336,16 +361,14 @@ def main():
 
             # Update statistics
             samples_seen += batch_size
-            # if predicted_class == labels:
-            #     num_correct += 1
-            #     network.apply_reward(plasticity_reward)
-            # else:
-            #     network.apply_reward(plasticity_punish)
 
             # Update progress bar description
             accuracy = num_correct / samples_seen * 100
-            progress_bar.set_description(
-                f'Epoch: {epoch + 1}/{num_epochs} Accuracy: {accuracy:.2f}% ({num_correct}/{samples_seen})')
+            desc = f'Epoch: {epoch + 1}/{num_epochs} Accuracy: {accuracy:.2f}% ({num_correct}/{samples_seen}) ' + ' '.join(
+                label_strings)
+
+            progress_bar.set_description(desc)
+            # network.reset_hidden_state()
 
         # After training for one epoch, validate the model
         val_accuracy = validate(network, batch_size, num_steps, test_loader)
