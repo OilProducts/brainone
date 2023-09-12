@@ -58,22 +58,14 @@ def LIF_with_threshold_decay(input_spikes: torch.Tensor,
     - threshold (torch.Tensor): Updated threshold.
     """
 
-    # Compute weighted input spikes
-    weighted_input_spikes = torch.mm(input_spikes, weights)
-
     # Compute new membrane potential by adding input and applying leak factor
-    membrane = membrane * beta + weighted_input_spikes
+    membrane = membrane * beta + torch.mm(input_spikes, weights)
 
     # Generate spikes wherever membrane potential exceeds threshold
     spike = (membrane > thresholds).float()
 
-    # Reset the membrane potential wherever spikes are generated
+    # Reset the membrane potential and threshold wherever spikes are generated
     membrane = torch.where(spike.bool(), reset, membrane)
-
-    # Decay the threshold for all neurons
-    thresholds = thresholds * threshold_decay
-
-    # reset the threshold wherever spikes are generated
-    thresholds = torch.where(spike.bool(), threshold_targets, thresholds)
+    thresholds = torch.where(spike.bool(), threshold_targets, thresholds * threshold_decay)
 
     return spike, membrane, thresholds

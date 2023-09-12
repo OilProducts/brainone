@@ -9,6 +9,9 @@ from torch.utils.data import DataLoader
 
 from snntorch import utils, surrogate
 
+import cProfile
+
+
 data_path = "~/robots/datasets/"
 transform = transforms.Compose(
     [
@@ -29,17 +32,17 @@ class CorticalLayer(nn.Module):
         self.mem = torch.zeros(output_size)
 
         self.spk = torch.zeros(1, output_size)
-        self.error = None
 
         self.loss_fn = loss_fn
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, betas=(0.9, 0.999))
         num_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print(f'initialized parameters: {num_params}')
 
-    def forward(self, input, error):
+    def forward(self, input):
         # Feedforward through the layers
         layer_out = self.layer(input)
         spk, mem = self.layer_lif(layer_out, self.mem)
+        return spk
         self.spk = spk.detach()
         self.mem = mem.detach().squeeze()
 
@@ -273,4 +276,5 @@ def main():
             samples_seen += 1
 
             progress_bar.set_description(f'Accuracy: {num_correct}/{samples_seen}  {num_correct / samples_seen}')
-main()
+
+# main()

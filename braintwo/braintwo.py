@@ -10,6 +10,10 @@ from tqdm import tqdm
 
 import neurons
 import layers
+import spike_utils
+
+import cProfile
+import pstats
 
 torch.set_printoptions(threshold=100000)
 
@@ -57,13 +61,12 @@ class SimpleSpikeNetwork(nn.Module):
                                          device=device,
                                          batch_size=batch_size)
         self.layer_3 = layers.STDPLinear(200, 10,
-                                            a_pos=self.a_pos,
-                                            a_neg=self.a_neg,
-                                            plasticity_reward=plasticity_reward,
-                                            plasticity_punish=plasticity_punish,
-                                            device=device,
-                                            batch_size=batch_size)
-
+                                         a_pos=self.a_pos,
+                                         a_neg=self.a_neg,
+                                         plasticity_reward=plasticity_reward,
+                                         plasticity_punish=plasticity_punish,
+                                         device=device,
+                                         batch_size=batch_size)
 
     def forward(self, x, labels, train=True):
         layer_1_out = self.layer_1(x, train=train)
@@ -268,43 +271,20 @@ def validate(network, batch_size, num_steps, test_loader):
 
 
 def main():
-    mnist_training_data = datasets.MNIST(
-        data_path, train=True, download=True, transform=transform
-    )
-    mnist_test_data = datasets.MNIST(
-        data_path, train=False, download=True, transform=transform)
 
     # Training param
-    num_epochs = 100
+    num_epochs = 1
     num_steps = 200
     plasticity_reward = 1
     plasticity_punish = 1
-    batch_size = 256
-    subset = 1
+    batch_size = 8
+    shrink_factor = 10
 
-    mnist_training_data = utils.data_subset(mnist_training_data, subset)
-    mnist_test_data = utils.data_subset(mnist_test_data, subset)
-
-    # Initialize dataloaders
-    train_loader = DataLoader(
-        mnist_training_data,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=0,
-        pin_memory=True,
-        # prefetch_factor=8,
-    )
-    print("Train loader batches:", len(train_loader))
-
-    test_loader = DataLoader(
-        mnist_test_data,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=0
-    )
-    print("Test loader batches:", len(test_loader))
+    mnist_training_loader, mnist_test_loader = (
+        spike_utils.get_mnist_dataloaders(shrink_factor=shrink_factor,
+                                    batch_size=batch_size,
+                                    shuffle=True,
+                                    num_workers=0))
 
     # Initialize network
     network = SimpleSpikeNetwork(batch_size=batch_size,
@@ -320,7 +300,7 @@ def main():
 
         correct_counts = torch.zeros(10, device=device)
         total_counts = torch.zeros(10, device=device)
-        progress_bar = tqdm(iter(train_loader), total=len(train_loader), unit_scale=batch_size)
+        progress_bar = tqdm(iter(mnist_training_loader), total=len(mnist_training_loader), unit_scale=batch_size)
         for inputs, labels in progress_bar:
             # Move inputs and labels to GPU
             inputs = inputs.to(device)
@@ -348,18 +328,18 @@ def main():
 
                 # Forward pass through the network
                 output_spikes = network(in_spikes, labels)
-                #print(f'output_spikes: {output_spikes}')
+                # print(f'output_spikes: {output_spikes}')
 
                 # Accumulate spikes
                 output_spike_accumulator += output_spikes
 
             network.layer_3.threshold_targets = torch.full((batch_size, 10), 1, dtype=torch.float, device=device)
 
-            #network.layer_7.threshold_targets = torch.full((batch_size, 100), 1, dtype=torch.float, device=device)
+            # network.layer_7.threshold_targets = torch.full((batch_size, 100), 1, dtype=torch.float, device=device)
             # Determine the predicted class based on the accumulated spikes
-            #print(f'output_spike_accumulator: {output_spike_accumulator}')
+            # print(f'output_spike_accumulator: {output_spike_accumulator}')
             _, predicted_classes = output_spike_accumulator.max(dim=1)
-            #_, predicted_classes = pool_spikes(output_spike_accumulator).max(dim=1)
+            # _, predicted_classes = pool_spikes(output_spike_accumulator).max(dim=1)
 
             correct_predictions = (predicted_classes == labels).float()
             for idx, correct in enumerate(correct_predictions):
@@ -391,15 +371,15 @@ def main():
             network.reset_hidden_state()
 
         # After training for one epoch, validate the model
-        val_accuracy = validate(network, batch_size, num_steps, test_loader)
-        #print(f"Validation Accuracy after epoch {epoch + 1}: {val_accuracy:.2f}%")
+        val_accuracy = validate(network, batch_size, num_steps, mnist_test_loader)
+        # print(f"Validation Accuracy after epoch {epoch + 1}: {val_accuracy:.2f}%")
 
 
 with torch.no_grad():
     # main()
 
-    # profiler = cProfile.Profile()
-    # profiler.enable()
+    profiler = cProfile.Profile()
+    profiler.enable()
     main()
-    # profiler.disable()
-    # stats = pstats.Stats(profiler).sort_stats('tottime').print_stats(10)
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats('tottime').print_stats(10)
