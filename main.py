@@ -1,5 +1,3 @@
-import cProfile
-
 from tqdm import tqdm
 
 import torch
@@ -10,6 +8,9 @@ from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 
 from snntorch import utils, surrogate
+
+import cProfile
+
 
 data_path = "~/robots/datasets/"
 transform = transforms.Compose(
@@ -31,30 +32,25 @@ class CorticalLayer(nn.Module):
         self.mem = torch.zeros(output_size)
 
         self.spk = torch.zeros(1, output_size)
-        self.error = None
 
         self.loss_fn = loss_fn
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-3, betas=(0.9, 0.999))
         num_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print(f'initialized parameters: {num_params}')
 
-    def forward(self, input, error):
-        print(f'input: {input.shape}')
+    def forward(self, input):
         # Feedforward through the layers
-        input = input.detach()
-        error = error.detach()
         layer_out = self.layer(input)
         spk, mem = self.layer_lif(layer_out, self.mem)
-        self.spk = spk
-        self.mem = mem.squeeze()
-        #self.mem = mem.detach().squeeze
+        return spk
+        self.spk = spk.detach()
+        self.mem = mem.detach().squeeze()
 
         loss_val = self.loss_fn(mem, error)
         self.optimizer.zero_grad()
         loss_val.backward()
         self.optimizer.step()
         return self.spk
-
 
 def custom_loss(output_mem, target_tensor):
     num_classes = 10  # Number of classes
@@ -226,7 +222,6 @@ def predict_class(output_tensor):
 
     return predicted_class.item()
 
-
 def main():
     mnist_training_data = datasets.MNIST(
         data_path, train=True, download=True, transform=transform
@@ -234,8 +229,8 @@ def main():
     mnist_test_data = datasets.MNIST(
         data_path, train=False, download=True, transform=transform)
 
-    mnist_training_data = utils.data_subset(mnist_training_data, 1000)
-    mnist_test_data = utils.data_subset(mnist_test_data, 1000)
+    mnist_training_data = utils.data_subset(mnist_training_data, 10)
+    mnist_test_data = utils.data_subset(mnist_test_data, 10)
 
     # Initialize dataloaders
     train_loader = DataLoader(
@@ -255,7 +250,7 @@ def main():
 
     cortical_stack = HierarchicalModel(28 * 28, 100, 100)
 
-    for epoch in range(1):
+    for epoch in range(10):
         progress_bar = tqdm(iter(train_loader), total=len(train_loader))
 
         samples_seen = 0
@@ -271,10 +266,9 @@ def main():
 
             # print(data.shape)
             output = []
-            steps = 8
+            steps = 100
             for i in range(steps):
-                spikes = snn.spikegen.rate(data, 1)
-                activations = cortical_stack(spikes.detach(), targets)
+                activations = cortical_stack(snn.spikegen.rate(data, 1), targets)
                 output.append(activations)
             output = torch.stack(output)
             if predict_class_over_time(output, steps) == targets.item():
@@ -283,10 +277,4 @@ def main():
 
             progress_bar.set_description(f'Accuracy: {num_correct}/{samples_seen}  {num_correct / samples_seen}')
 
-
-# cProfile.run("main()")
-
-with torch.autograd.profiler.profile() as prof:
-    main()
-
-print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=100))
+# main()

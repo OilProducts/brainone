@@ -5,7 +5,8 @@ import neurons
 
 
 class STDPLinear(nn.Module):
-    """A Linear layer that uses Spike-Timing Dependent Plasticity (STDP) for learning.
+    """A Linear layer that uses Spike-Timing Dependent Plasticity (STDP) for
+    learning.
 
     Attributes:
     - in_features (int): Number of input features.
@@ -108,19 +109,17 @@ class STDPLinear(nn.Module):
 
         return self.out_spikes
 
-    # @torch.compile
+    @torch.compile
     def compute_stdp_with_trace(self, trace_pre, trace_post):
         # This is a simplified STDP rule using traces, adjust as needed
-        # print(f'trace_pre: {trace_pre}')
-        # print(f'trace_post: {trace_post}')
         potentiation = trace_post.unsqueeze(1) * self.a_pos * trace_pre.unsqueeze(2)
         depression = trace_pre.unsqueeze(2) * self.a_neg * trace_post.unsqueeze(1)
         return potentiation - depression
 
     def reset_hidden_state(self):
-        self.membrane = torch.zeros(self.batch_size, self.out_features, device=self.device)
-        self.trace_pre = torch.zeros(self.in_features, device=self.device)
-        self.trace_post = torch.zeros(self.out_features, device=self.device)
+        self.membrane = torch.ones(self.batch_size, self.out_features, device=self.device) * self.membrane_reset
+        self.trace_pre = torch.ones(self.in_features, device=self.device)
+        self.trace_post = torch.ones(self.out_features, device=self.device)
 
     def apply_reward(self, factor):
         """Modifies the last weight update based on a reward/punishment factor.
