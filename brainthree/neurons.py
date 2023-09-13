@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from flax import linen as nn
 
 
 def LIF_with_threshold_decay(input_spikes,

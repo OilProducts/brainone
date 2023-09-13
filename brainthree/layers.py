@@ -5,14 +5,15 @@ from flax import linen as nn
 import neurons
 
 
-def custom_weight_initializer(rng, shape):
-    return jax.random.uniform(rng, shape) * (1. / shape[0])
+
+
+
 
 
 class STDPLinear(nn.Module):
     in_features: int
     out_features: int
-    batch_size: int
+    # batch_size: int
     threshold_reset: float = 1
     threshold_decay: float = .95
     membrane_reset: float = .1
@@ -28,9 +29,6 @@ class STDPLinear(nn.Module):
         self.weights = self.param('weight', custom_weight_initializer, (self.in_features, self.out_features))
         self.membrane = jnp.ones((self.batch_size, self.out_features)) * self.membrane_reset
         self.thresholds = jnp.ones((self.batch_size, self.out_features)) * self.threshold_reset
-
-        self.out_spikes = jnp.zeros((self.batch_size, self.out_features))
-
         self.trace_pre = jnp.ones(self.in_features)
         self.trace_post = jnp.ones(self.out_features)
 

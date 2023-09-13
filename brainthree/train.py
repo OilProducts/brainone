@@ -49,6 +49,8 @@ def main():
 
 
 
+
+
     # Convert PyTorch DataLoader to JAX arrays (assumes spike_utils.get_mnist_dataloaders is converted)
     mnist_training_loader, mnist_test_loader = (
     spike_utils.get_mnist_dataloaders(shrink_factor=shrink_factor,
