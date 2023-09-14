@@ -15,6 +15,8 @@ import spike_utils
 import cProfile
 import pstats
 
+torch.set_float32_matmul_precision('high')
+
 torch.set_printoptions(threshold=100000)
 
 if torch.cuda.is_available():
@@ -29,11 +31,11 @@ else:
     device = torch.device("cpu")
     print("GPU is not available, using CPU instead")
 
+device = torch.device("cpu")
+
 data_path = "~/robots/datasets/"
 transform = transforms.Compose(
     [
-        transforms.Resize((28, 28)),
-        transforms.Grayscale(),
         transforms.ToTensor(),
         transforms.Normalize((0,), (1,)),
     ]
@@ -93,29 +95,7 @@ class SpikingNetwork(nn.Module):
         self.a_pos = a_pos
         self.a_neg = a_neg
 
-        self.layer_1 = STDPLinear(784, 500,
-                                  a_pos=self.a_pos,
-                                  a_neg=self.a_neg,
-                                  plasticity_reward=plasticity_reward,
-                                  plasticity_punish=plasticity_punish,
-                                  device=device,
-                                  batch_size=batch_size)
-        # self.layer_2 = STDPLinear(500, 200,
-        #                           a_pos=self.a_pos,
-        #                           a_neg=self.a_neg,
-        #                           plasticity_reward=plasticity_reward,
-        #                           plasticity_punish=plasticity_punish,
-        #                           device=device,
-        #                           batch_size=batch_size)
-        # self.layer_3 = STDPLinear(200, 100,
-        #                           a_pos=self.a_pos,
-        #                           a_neg=self.a_neg,
-        #                           plasticity_reward=plasticity_reward,
-        #                           plasticity_punish=plasticity_punish,
-        #                           device=device,
-        #                           batch_size=batch_size)
-
-        self.layer_2 = STDPLinear(500, 500,
+        self.layer_1 = layers.STDPLinear(784, 500,
                                   a_pos=self.a_pos,
                                   a_neg=self.a_neg,
                                   plasticity_reward=plasticity_reward,
@@ -123,35 +103,7 @@ class SpikingNetwork(nn.Module):
                                   device=device,
                                   batch_size=batch_size)
 
-        self.layer_3 = STDPLinear(500, 500,
-                                  a_pos=self.a_pos,
-                                  a_neg=self.a_neg,
-                                  plasticity_reward=plasticity_reward,
-                                  plasticity_punish=plasticity_punish,
-                                  device=device,
-                                  batch_size=batch_size)
-        self.layer_4 = STDPLinear(500, 500,
-                                  a_pos=self.a_pos,
-                                  a_neg=self.a_neg,
-                                  plasticity_reward=plasticity_reward,
-                                  plasticity_punish=plasticity_punish,
-                                  device=device,
-                                  batch_size=batch_size)
-        self.layer_5 = STDPLinear(500, 500,
-                                  a_pos=self.a_pos,
-                                  a_neg=self.a_neg,
-                                  plasticity_reward=plasticity_reward,
-                                  plasticity_punish=plasticity_punish,
-                                  device=device,
-                                  batch_size=batch_size)
-        self.layer_6 = STDPLinear(500, 500,
-                                  a_pos=self.a_pos,
-                                  a_neg=self.a_neg,
-                                  plasticity_reward=plasticity_reward,
-                                  plasticity_punish=plasticity_punish,
-                                  device=device,
-                                  batch_size=batch_size)
-        self.layer_7 = STDPLinear(500, 100,
+        self.layer_2 = layers.STDPLinear(500, 500,
                                   a_pos=self.a_pos,
                                   a_neg=self.a_neg,
                                   plasticity_reward=plasticity_reward,
@@ -159,13 +111,43 @@ class SpikingNetwork(nn.Module):
                                   device=device,
                                   batch_size=batch_size)
 
-        # self.layer_5 = STDPLinear(200, 100,
-        #                           a_pos=self.a_pos,
-        #                           a_neg=self.a_neg,
-        #                           plasticity_reward=plasticity_reward,
-        #                           plasticity_punish=plasticity_punish,
-        #                           device=device,
-        #                           batch_size=batch_size)
+        self.layer_3 = layers.STDPLinear(500, 500,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+        self.layer_4 = layers.STDPLinear(500, 500,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+        self.layer_5 = layers.STDPLinear(500, 500,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+        self.layer_6 = layers.STDPLinear(500, 500,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+        self.layer_7 = layers.STDPLinear(500, 100,
+                                  a_pos=self.a_pos,
+                                  a_neg=self.a_neg,
+                                  plasticity_reward=plasticity_reward,
+                                  plasticity_punish=plasticity_punish,
+                                  device=device,
+                                  batch_size=batch_size)
+
+
 
     def forward(self, x, labels, train=True):
         layer_1_out = self.layer_1(x, train=train)
@@ -176,16 +158,6 @@ class SpikingNetwork(nn.Module):
         layer_5_out = self.layer_5(layer_4_out, train=train)
         layer_6_out = self.layer_6(layer_5_out, train=train)
         layer_7_out = self.layer_7(layer_6_out, train=train)
-
-        # # print(f'total spikes in layer 1: {layer_1_out.sum()}')
-        # layer_2_out = self.layer_2(torch.cat((layer_1_out, self.layer_5.out_spikes), 1), train=train)
-        # # print(f'total spikes in layer 2: {layer_2_out.sum()}')
-        # layer_3_out = self.layer_3(torch.cat((layer_2_out, self.layer_5.out_spikes), 1), train=train)
-        # # print(f'total spikes in layer 3: {layer_3_out.sum()}')
-        # layer_4_out = self.layer_4(torch.cat((layer_3_out, self.layer_5.out_spikes), 1), train=train)
-        # # print(f'total spikes in layer 4: {layer_4_out.sum()}')
-        # layer_5_out = self.layer_5(layer_4_out, train=train)
-        # # print(f'total spikes in layer 5: {layer_5_out.sum()}')
 
         return layer_7_out
 
@@ -232,7 +204,7 @@ def validate(network, batch_size, num_steps, test_loader):
             labels = labels.to(device)
 
             inputs = inputs.view(batch_size, -1)
-            output_spike_accumulator = torch.zeros(batch_size, 10, device=device)
+            output_spike_accumulator = torch.zeros(batch_size, 100, device=device)
 
             for step in range(num_steps):
                 in_spikes = spikegen.rate(inputs, 1).squeeze(0)
@@ -271,14 +243,13 @@ def validate(network, batch_size, num_steps, test_loader):
 
 
 def main():
-
     # Training param
-    num_epochs = 1
+    num_epochs = 20
     num_steps = 200
     plasticity_reward = 1
     plasticity_punish = 1
-    batch_size = 8
-    shrink_factor = 10
+    batch_size = 4
+    shrink_factor = 1
 
     mnist_training_loader, mnist_test_loader = (
         spike_utils.get_mnist_dataloaders(shrink_factor=shrink_factor,
@@ -286,13 +257,12 @@ def main():
                                     shuffle=True,
                                     num_workers=0))
 
-    # Initialize network
-    network = SimpleSpikeNetwork(batch_size=batch_size,
-                                 a_pos=.01,
-                                 a_neg=.01,
-                                 plasticity_reward=plasticity_reward,
-                                 plasticity_punish=plasticity_punish,
-                                 device=device)
+    network = SpikingNetwork(batch_size=batch_size,
+                                a_pos=.001,
+                                a_neg=.001,
+                                plasticity_reward=plasticity_reward,
+                                plasticity_punish=plasticity_punish,
+                                device=device)
 
     for epoch in range(num_epochs):
         num_correct = 0  # Number of correct predictions
@@ -307,20 +277,20 @@ def main():
             labels = labels.to(device)
             # Convert inputs to spike trains
             inputs = inputs.view(batch_size, -1)  # This will reshape the tensor to [batch_size, 784]
-            output_spike_accumulator = torch.zeros(batch_size, 10, device=device)
+            output_spike_accumulator = torch.zeros(batch_size, 100, device=device)
 
             # Set label threshold to be lower
             # print(f'layer_2 threshold targets: {network.layer_2.threshold_targets}')
             # print(f'layer_2 threshold targets shape: {network.layer_2.threshold_targets.shape}')
             for idx, label in enumerate(labels):
                 # print(f'idx: {idx}, label: {label}')
-                network.layer_3.threshold_targets[idx, label] = network.layer_3.threshold_reset * .7
-                network.layer_3.thresholds = network.layer_3.threshold_targets
-                # start_idx = label * 10  # 10 neurons_per_class
-                # end_idx = start_idx + 10  # 10 neurons_per_class
+                # network.layer_3.threshold_targets[idx, label] = network.layer_3.threshold_reset * .7
+                # network.layer_3.thresholds = network.layer_3.threshold_targets
+                start_idx = label * 10  # 10 neurons_per_class
+                end_idx = start_idx + 10  # 10 neurons_per_class
                 #
-                # network.layer_7.threshold_targets[idx, start_idx:end_idx] *= .3
-                # network.layer_7.thresholds = network.layer_7.threshold_targets
+                network.layer_7.threshold_targets[idx, start_idx:end_idx] *= .8
+                network.layer_7.thresholds = network.layer_7.threshold_targets
             # print(f'layer_2 threshold targets: {network.layer_2.threshold_targets}')
 
             for step in range(num_steps):
@@ -333,13 +303,13 @@ def main():
                 # Accumulate spikes
                 output_spike_accumulator += output_spikes
 
-            network.layer_3.threshold_targets = torch.full((batch_size, 10), 1, dtype=torch.float, device=device)
+            # network.layer_3.threshold_targets = torch.full((batch_size, 10), 1, dtype=torch.float, device=device)
 
-            # network.layer_7.threshold_targets = torch.full((batch_size, 100), 1, dtype=torch.float, device=device)
+            network.layer_7.threshold_targets = torch.full((batch_size, 100), 1, dtype=torch.float, device=device)
             # Determine the predicted class based on the accumulated spikes
             # print(f'output_spike_accumulator: {output_spike_accumulator}')
-            _, predicted_classes = output_spike_accumulator.max(dim=1)
-            # _, predicted_classes = pool_spikes(output_spike_accumulator).max(dim=1)
+            #_, predicted_classes = output_spike_accumulator.max(dim=1)
+            _, predicted_classes = pool_spikes(output_spike_accumulator).max(dim=1) # TODO: make sure pool_spikes works correctly
 
             correct_predictions = (predicted_classes == labels).float()
             for idx, correct in enumerate(correct_predictions):
@@ -378,8 +348,8 @@ def main():
 with torch.no_grad():
     # main()
 
-    profiler = cProfile.Profile()
-    profiler.enable()
+    # profiler = cProfile.Profile()
+    # profiler.enable()
     main()
-    profiler.disable()
-    stats = pstats.Stats(profiler).sort_stats('tottime').print_stats(10)
+    # profiler.disable()
+    # stats = pstats.Stats(profiler).sort_stats('tottime').print_stats(10)
