@@ -69,7 +69,7 @@ class STDPLinear(nn.Module):
 
         self.device = device
 
-    #@torch.compile
+    @torch.compile
     def forward(self, in_spikes, train=True):
         """Forward pass of the STDP Linear layer."""
 
@@ -110,7 +110,7 @@ class STDPLinear(nn.Module):
 
         return self.out_spikes
 
-    #@torch.compile
+    @torch.compile
     def compute_stdp_with_trace(self, trace_pre, trace_post):
         # This is a simplified STDP rule using traces, adjust as needed
         potentiation = trace_post.unsqueeze(1) * self.a_pos * trace_pre.unsqueeze(2)

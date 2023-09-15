@@ -1,7 +1,7 @@
 import torch
 
 
-#@torch.compile
+@torch.compile
 def LIFNeuron(input_spikes: torch.Tensor, weights: torch.Tensor, membrane: torch.Tensor, beta: float, threshold: float,
               reset: float):
     """Leaky Integrate-and-Fire (LIF) Neuron model.
@@ -32,7 +32,7 @@ def LIFNeuron(input_spikes: torch.Tensor, weights: torch.Tensor, membrane: torch
 
     return spike, membrane
 
-#@torch.compile
+@torch.compile
 def LIF_with_threshold_decay(input_spikes: torch.Tensor,
                              weights: torch.Tensor,
                              membrane: torch.Tensor,

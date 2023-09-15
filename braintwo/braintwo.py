@@ -31,7 +31,7 @@ else:
     device = torch.device("cpu")
     print("GPU is not available, using CPU instead")
 
-device = torch.device("cpu")
+#device = torch.device("cpu")
 
 data_path = "~/robots/datasets/"
 transform = transforms.Compose(
@@ -245,10 +245,10 @@ def validate(network, batch_size, num_steps, test_loader):
 def main():
     # Training param
     num_epochs = 20
-    num_steps = 200
+    num_steps = 2000
     plasticity_reward = 1
     plasticity_punish = 1
-    batch_size = 4
+    batch_size = 128
     shrink_factor = 1
 
     mnist_training_loader, mnist_test_loader = (
@@ -259,7 +259,7 @@ def main():
 
     network = SpikingNetwork(batch_size=batch_size,
                                 a_pos=.001,
-                                a_neg=.001,
+                                a_neg=.0005,
                                 plasticity_reward=plasticity_reward,
                                 plasticity_punish=plasticity_punish,
                                 device=device)
